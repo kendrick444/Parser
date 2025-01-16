@@ -7,7 +7,7 @@ interface CustomNewsProps {
     description_news: string;
     date_news: string;
     img_news: string;
-};
+}
 const CustomNews: React.FC<CustomNewsProps> = ({
     title_news,
     source_news,
