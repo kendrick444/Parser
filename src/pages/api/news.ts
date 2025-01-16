@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import axios from 'axios';
 import { JSDOM } from 'jsdom';
+import cron from 'node-cron';
 
 type NewsItem = {
     title: string;
@@ -11,6 +12,11 @@ type NewsItem = {
     img: string;
     imgWidth: number;
     imgHeight: number;
+};
+
+const cache: { data: NewsItem[]; lastUpdated: Date } = {
+    data: [],
+    lastUpdated: new Date(0),
 };
 
 const parser20Minut = async (): Promise<NewsItem[]> => {
@@ -221,10 +227,10 @@ const parserTENews = async (): Promise<NewsItem[]> => {
     return news;
 };
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+const fetchAllNews = async (): Promise<NewsItem[]> => {
     const allNews: NewsItem[] = [];
-    const keyword = req.query.keyword?.toString().toLowerCase();
-    const addedLinks = new Set();
+    const addedLinks = new Set<string>();
+
     const addNewsIfNotExist = (newsItem: NewsItem) => {
         if (!addedLinks.has(newsItem.link)) {
             addedLinks.add(newsItem.link);
@@ -240,19 +246,49 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         { parseFn: parserTENews, sourceName: 'TENews' },
     ];
 
-    for (const { parseFn, sourceName } of newsSources) {
+    for (const { parseFn } of newsSources) {
         const sourceNews = await parseFn();
-        sourceNews.forEach((newsItem) => {
-            addNewsIfNotExist(newsItem);
-        });
+        sourceNews.forEach(addNewsIfNotExist);
     }
 
-    if (keyword) {
-        const filteredNews = allNews.filter((newsItem) =>
-            newsItem.title.toLowerCase().includes(keyword)
-        );
+    return allNews;
+};
+
+cron.schedule('0 * * * *', async () => {
+    console.log('Отримання новин...');
+
+    const newData = await fetchAllNews();
+
+    if (JSON.stringify(newData) !== JSON.stringify(cache.data)) {
+        console.log('Дані кешу оновлено!');
+        cache.data = newData;
+        cache.lastUpdated = new Date();
+        console.log('Дані обновленно )):', cache.lastUpdated);
+    } else {
+        console.log('Не вдалось обновити дані через відсутність нових ((:');
+    }
+});
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    const keyword = req.query.keyword?.toString().toLowerCase();
+
+    if (Date.now() - cache.lastUpdated.getTime() < 60 * 60 * 1000) {
+        const filteredNews = keyword
+            ? cache.data.filter((newsItem) =>
+                newsItem.title.toLowerCase().includes(keyword)
+            )
+            : cache.data;
         return res.status(200).json(filteredNews);
     }
 
-    return res.status(200).json(allNews);
+    console.log('Отримання нових новин...');
+    cache.data = await fetchAllNews();
+    cache.lastUpdated = new Date();
+
+    const filteredNews = keyword
+        ? cache.data.filter((newsItem) =>
+            newsItem.title.toLowerCase().includes(keyword)
+        )
+        : cache.data;
+
+    return res.status(200).json(filteredNews);
 }
